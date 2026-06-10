@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}LogLens - Upload{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Upload a trip-log PDF</h1>
+  <p class="muted">
+    Each page is treated as one trip-log sheet. Extraction provider:
+    <strong>{{ provider }}</strong> &middot; {{ location_count }} cached locations.
+  </p>
+  <form action="/upload" method="post" enctype="multipart/form-data" class="upload">
+    <input type="file" name="file" accept="application/pdf,.pdf" required />
+    <button type="submit">Upload &amp; process</button>
+  </form>
+  <form action="/admin/refresh-locations" method="post" class="inline">
+    <button type="submit" class="secondary">Refresh locations cache</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Recent uploads</h2>
+  {% if jobs %}
+  <table class="list">
+    <thead>
+      <tr><th>File</th><th>Status</th><th>Pages</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td><a href="/jobs/{{ job.id }}">{{ job.original_name }}</a></td>
+        <td><span class="badge badge-{{ job.status }}">{{ job.status }}</span></td>
+        <td>{{ job.page_count }}</td>
+        <td>
+          <form action="/jobs/{{ job.id }}/delete" method="post"
+                onsubmit="return confirm('Delete this job?')">
+            <button type="submit" class="link danger">delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No uploads yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

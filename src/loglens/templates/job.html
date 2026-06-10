@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}LogLens - {{ job.original_name }}{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="row-between">
+    <h1>{{ job.original_name }}</h1>
+    <div>
+      <a class="button" href="/jobs/{{ job.id }}/export.csv">Download all CSV</a>
+      <a class="button secondary" href="/">Back</a>
+    </div>
+  </div>
+  <p class="muted">
+    Status: <span class="badge badge-{{ job.status }}">{{ job.status }}</span>
+    &middot; {{ sheets|length }} sheet(s)
+  </p>
+  {% if job.error %}
+  <p class="error">Processing error: {{ job.error }}</p>
+  {% endif %}
+</section>
+
+<datalist id="locations">
+  {% for name in locations %}<option value="{{ name }}"></option>{% endfor %}
+</datalist>
+
+{% for sheet in sheets %}
+<section class="card sheet" id="sheet-{{ sheet.page_index }}">
+  <h2>Sheet {{ sheet.page_index + 1 }}</h2>
+  <div class="sheet-grid">
+    <div class="scan">
+      <img src="/jobs/{{ job.id }}/render/{{ sheet.page_index }}.png"
+           alt="Scanned sheet {{ sheet.page_index + 1 }}" loading="lazy" />
+    </div>
+    <form class="sheet-form" method="post"
+          action="/jobs/{{ job.id }}/sheets/{{ sheet.page_index }}/save">
+      <div class="header-fields">
+        <label class="{{ 'flag' if 'driver' in sheet.uncertain_fields }}">
+          Driver <input name="driver" value="{{ sheet.driver or '' }}" />
+        </label>
+        <label class="{{ 'flag' if 'truck_no' in sheet.uncertain_fields }}">
+          Truck # <input name="truck_no" value="{{ sheet.truck_no or '' }}" />
+        </label>
+      </div>
+
+      <table class="rows">
+        <thead>
+          <tr>
+            <th>Date</th><th>Place (raw)</th><th>Resolved location</th>
+            <th>Start</th><th>End</th><th>Trailer #</th><th>BOL/Ticket</th><th>Code</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in sheet.rows %}
+          <tr>
+            <td><input name="row-{{ loop.index0 }}-date" value="{{ r.date or '' }}" size="6" /></td>
+            <td class="{{ 'flag' if 'place_raw' in r.uncertain_fields }}">
+              <input name="row-{{ loop.index0 }}-place_raw" value="{{ r.place_raw or '' }}" />
+            </td>
+            <td class="resolve">
+              <input list="locations" name="row-{{ loop.index0 }}-place_resolved"
+                     value="{{ r.place_resolved or '' }}"
+                     class="{{ 'unresolved' if not r.place_resolved }}" />
+              {% if r.place_score is not none %}
+              <span class="score score-{{ 'hi' if r.place_score >= 90 else ('mid' if r.place_score >= 70 else 'lo') }}">
+                {{ r.place_score }}%
+              </span>
+              {% endif %}
+              {% if r.place_alternates %}
+              <div class="alts">
+                {% for alt in r.place_alternates %}
+                <button type="button" class="alt" data-target="row-{{ loop.index0 }}-place_resolved"
+                        data-value="{{ alt.name }}">{{ alt.name }} ({{ alt.score }})</button>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </td>
+            <td><input name="row-{{ loop.index0 }}-start_miles" value="{{ r.start_miles or '' }}" size="7" /></td>
+            <td><input name="row-{{ loop.index0 }}-end_miles" value="{{ r.end_miles or '' }}" size="7" /></td>
+            <td><input name="row-{{ loop.index0 }}-trailer_no" value="{{ r.trailer_no or '' }}" size="6"
+                       class="{{ 'flag' if 'trailer_no' in r.uncertain_fields }}" /></td>
+            <td><input name="row-{{ loop.index0 }}-bol_ticket" value="{{ r.bol_ticket or '' }}" size="8" /></td>
+            <td><input name="row-{{ loop.index0 }}-code" value="{{ r.code or '' }}" size="3" /></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="footer-fields">
+        <label>Beg. Odometer <input name="beg_odometer" value="{{ sheet.beg_odometer or '' }}" /></label>
+        <label>End Odometer <input name="end_odometer" value="{{ sheet.end_odometer or '' }}" /></label>
+        <label>Total Miles <input name="total_miles" value="{{ sheet.total_miles or '' }}" /></label>
+      </div>
+
+      <div class="row-between">
+        <button type="submit">Save corrections</button>
+        <a class="button secondary"
+           href="/jobs/{{ job.id }}/sheets/{{ sheet.page_index }}/export.csv">Sheet CSV</a>
+      </div>
+    </form>
+  </div>
+</section>
+{% endfor %}
+
+<script src="/static/app.js"></script>
+{% endblock %}

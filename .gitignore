@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Test / tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local state (DB, uploads, page renders)
+*.db
+state/
+
+# OS
+.DS_Store
+
+# Sample / local inputs (not part of the repo)
+driver.pdf
+
+# Other
+.left_off
