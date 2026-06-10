@@ -1,0 +1,34 @@
+{# Shared rendering for FieldValue: input shaded by confidence band (yellow =
+   medium, red = low; numeric confidence is intentionally not displayed), with
+   an optional top-3 next-best alternates swap control for curated fields. #}
+
+{% macro field_input(name, fv, size=None) %}
+{% set band = fv.band() %}
+<div class="fv">
+  <input name="{{ name }}" value="{{ fv.value or '' }}"
+         {% if size %}size="{{ size }}"{% endif %}
+         class="{{ 'conf-' + band if band }}"
+         {% if band %}title="{{ 'Low' if band == 'low' else 'Medium' }} confidence - please verify"{% endif %} />
+</div>
+{% endmacro %}
+
+{% macro field_resolve(name, fv, datalist_id, required=true) %}
+{% set band = fv.band() %}
+<div class="fv resolve">
+  <div class="fv-line">
+    <input list="{{ datalist_id }}" name="{{ name }}" value="{{ fv.value or '' }}"
+           class="{{ 'conf-' + band if band }}{{ ' unresolved' if required and not fv.value }}"
+           {% if band %}title="{{ 'Low' if band == 'low' else 'Medium' }} confidence - please verify"{% endif %}
+           autocomplete="off" />
+  </div>
+  {% if fv.alternates %}
+  <div class="alts" title="Next-best matches">
+    {% for alt in fv.alternates[:3] %}
+    <button type="button" class="alt" data-target="{{ name }}" data-value="{{ alt.value }}">
+      {{ alt.value }}
+    </button>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}

@@ -17,11 +17,20 @@ venv/
 *.db
 state/
 
+# Secrets / local config (never commit credentials)
+credentials.toml
+*.credentials
+config.toml
+
 # OS
 .DS_Store
 
 # Sample / local inputs (not part of the repo)
 driver.pdf
 
+# iCloud Drive sync placeholders
+*.icloud
+
 # Other
 .left_off
+scratch

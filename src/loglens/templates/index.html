@@ -5,14 +5,14 @@
   <h1>Upload a trip-log PDF</h1>
   <p class="muted">
     Each page is treated as one trip-log sheet. Extraction provider:
-    <strong>{{ provider }}</strong> &middot; {{ location_count }} cached locations.
+    <strong>{{ provider }}</strong> &middot;
+    {{ ref_counts.location }} locations, {{ ref_counts.driver }} drivers,
+    {{ ref_counts.truck }} trucks, {{ ref_counts.trailer }} trailers known
+    (<a href="/settings">manage</a>).
   </p>
   <form action="/upload" method="post" enctype="multipart/form-data" class="upload">
     <input type="file" name="file" accept="application/pdf,.pdf" required />
     <button type="submit">Upload &amp; process</button>
-  </form>
-  <form action="/admin/refresh-locations" method="post" class="inline">
-    <button type="submit" class="secondary">Refresh locations cache</button>
   </form>
 </section>
 

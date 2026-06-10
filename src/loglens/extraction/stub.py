@@ -2,35 +2,46 @@
 
 Returns deterministic fixtures transcribed from the sample ``driver.pdf`` so the
 whole pipeline (resolve, review, export) can be exercised with no API key. For
-pages without a fixture it returns an empty sheet.
+pages without a fixture it returns an empty sheet. Fields the real OCR would be
+unsure about are given a low confidence so the review UI highlights them.
 """
 
 from __future__ import annotations
 
-from ..models import Sheet, TripRow
+from ..models import FieldValue, Sheet, TripRow
+
+_HI = 96.0  # confidently read
+_LO = 42.0  # messy / uncertain reading
+
+
+def _f(value: str | None, low: bool = False) -> FieldValue:
+    if value is None:
+        return FieldValue()
+    return FieldValue(value=value, confidence=_LO if low else _HI, source="ocr")
 
 
 def _row(date, place, start, end, trailer, bol, code, uncertain=None):
+    uncertain = set(uncertain or [])
     return TripRow(
-        date=date,
-        place_raw=place,
-        start_miles=start,
-        end_miles=end,
-        trailer_no=trailer,
-        bol_ticket=bol,
-        code=code,
-        uncertain_fields=uncertain or [],
+        date=_f(date, "date" in uncertain),
+        place_raw=_f(place, "place_raw" in uncertain),
+        start_miles=_f(start, "start_miles" in uncertain),
+        end_miles=_f(end, "end_miles" in uncertain),
+        trailer_no=_f(trailer, "trailer_no" in uncertain),
+        bol_ticket=_f(bol, "bol_ticket" in uncertain),
+        code=_f(code, "code" in uncertain),
     )
 
 
 _FIXTURES: dict[int, Sheet] = {
     0: Sheet(
         page_index=0,
-        driver="Joe Vail",
-        truck_no="295-581",
-        beg_odometer="255443",
-        end_odometer="255864",
-        total_miles="421",
+        status="done",
+        driver=_f("Joe Vail"),
+        truck_no=_f("295-581"),
+        beg_odometer=_f("255443"),
+        end_odometer=_f("255864"),
+        total_miles=_f("421"),
         rows=[
             _row("6-26", "CH", "255443", "255477", "02188", None, "S"),
             _row(None, "Emerson Inno", "255477", "255539", "0216", "512717", None, ["place_raw"]),
@@ -43,11 +54,12 @@ _FIXTURES: dict[int, Sheet] = {
     ),
     1: Sheet(
         page_index=1,
-        driver="Jeremy",
-        truck_no="23029",
-        beg_odometer="241228",
-        end_odometer="241534",
-        total_miles="306",
+        status="done",
+        driver=_f("Jeremy"),
+        truck_no=_f("23029"),
+        beg_odometer=_f("241228"),
+        end_odometer=_f("241534"),
+        total_miles=_f("306"),
         rows=[
             _row("6-1", "Avanti", "241226", "241349", "02133", "5121894", None),
             _row(None, "Rem", "241349", "241422", "02184", "A96226", "S"),
@@ -61,11 +73,12 @@ _FIXTURES: dict[int, Sheet] = {
     ),
     2: Sheet(
         page_index=2,
-        driver="Mark",
-        truck_no="455510",
-        beg_odometer="373623",
-        end_odometer="373983",
-        total_miles="360",
+        status="done",
+        driver=_f("Mark"),
+        truck_no=_f("455510"),
+        beg_odometer=_f("373623"),
+        end_odometer=_f("373983"),
+        total_miles=_f("360"),
         rows=[
             _row("6-2-26", "CSI", "373623", "373681", "17585", "2131351", None),
             _row(None, "Random Hse", "373681", "373687", "17585", None, "MT"),
@@ -77,11 +90,12 @@ _FIXTURES: dict[int, Sheet] = {
     ),
     3: Sheet(
         page_index=3,
-        driver="Rob S",
-        truck_no="380285",
-        beg_odometer="509525",
-        end_odometer="509920",
-        total_miles="395",
+        status="done",
+        driver=_f("Rob S"),
+        truck_no=_f("380285"),
+        beg_odometer=_f("509525"),
+        end_odometer=_f("509920"),
+        total_miles=_f("395"),
         rows=[
             _row("6-2-26", "CH", "509525", "509551", "17506", "504611", "S"),
             _row(None, "Blue Buffalo", "509551", "509664", "08333", "5121495", None),
@@ -102,4 +116,7 @@ class StubExtractor:
         fixture = _FIXTURES.get(page_index)
         if fixture is not None:
             return fixture.model_copy(deep=True)
-        return Sheet(page_index=page_index)
+        return Sheet(page_index=page_index, status="done")
+
+    def verify(self) -> tuple[bool, str]:
+        return True, "stub provider (offline fixtures, no API call)"

@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}LogLens - Settings{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Settings</h1>
+  <p class="muted">Read-only status. Edit the files below, then restart the server.</p>
+
+  <h2>Extraction</h2>
+  <dl class="settings">
+    <dt>Provider</dt><dd>{{ provider }}</dd>
+    <dt>Model</dt><dd>{{ model }}</dd>
+    <dt>API key</dt>
+    <dd>{% if has_api_key %}<span class="badge badge-done">configured</span>
+        {% else %}<span class="badge badge-error">missing</span>{% endif %}</dd>
+  </dl>
+  <div class="row-between">
+    <button type="button" id="check-btn">Test Claude connection</button>
+    <span id="check-result" class="muted" aria-live="polite"></span>
+  </div>
+
+  <h2>Paths</h2>
+  <dl class="settings">
+    <dt>Config dir</dt><dd><code>{{ config_dir }}</code></dd>
+    <dt>config.toml</dt>
+    <dd><code>{{ config_file }}</code>
+      {% if not config_exists %}<span class="muted">(not created - run <code>loglens init</code>)</span>{% endif %}</dd>
+    <dt>credentials.toml</dt>
+    <dd><code>{{ credentials_file }}</code>
+      {% if not credentials_exists %}<span class="muted">(not created)</span>{% endif %}</dd>
+    <dt>State dir</dt><dd><code>{{ state_dir }}</code></dd>
+  </dl>
+</section>
+
+<section class="card">
+  <h1>Reference lists</h1>
+  <p class="muted">
+    The curated "source of truth" sets that trip-log values reconcile against.
+    They grow automatically as you save corrections; shorthand readings learned
+    from corrections are shown beside each entry.
+  </p>
+
+  {% for kind, entries in ref_lists.items() %}
+  <div class="ref-list" id="list-{{ kind }}">
+    <h2>{{ kind_labels[kind] }} <span class="muted">({{ entries|length }})</span></h2>
+    {% if entries %}
+    <table class="list">
+      <thead><tr><th>Value</th><th>Learned shorthand</th><th></th></tr></thead>
+      <tbody>
+        {% for e in entries %}
+        <tr>
+          <td>{{ e.value }}</td>
+          <td>
+            {% for a in e.aliases %}
+            <span class="alias-chip">{{ a.raw }}
+              <form method="post" action="/admin/aliases/{{ a.id }}/delete" class="inline">
+                <button type="submit" class="chip-x" title="Forget this shorthand">&times;</button>
+              </form>
+            </span>
+            {% else %}<span class="muted">-</span>{% endfor %}
+          </td>
+          <td class="row-actions">
+            <form method="post" action="/admin/lists/{{ kind }}/{{ e.id }}/delete"
+                  onsubmit="return confirm('Remove {{ e.value }} from {{ kind_labels[kind] }}?')"
+                  class="inline">
+              <button type="submit" class="link danger">remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">Empty - entries are added when you save corrections, or add one below.</p>
+    {% endif %}
+    <form method="post" action="/admin/lists/{{ kind }}" class="add-entry">
+      <input name="value" placeholder="Add a {{ kind }}..." required />
+      <button type="submit" class="secondary">Add</button>
+    </form>
+  </div>
+  {% endfor %}
+</section>
+
+<script>
+document.getElementById("check-btn").addEventListener("click", async function () {
+  const out = document.getElementById("check-result");
+  this.disabled = true;
+  out.textContent = "Testing...";
+  try {
+    const resp = await fetch("/admin/check", { method: "POST" });
+    const data = await resp.json();
+    out.innerHTML = data.ok
+      ? '<span class="saved">OK \u2713</span> ' + data.detail
+      : '<span class="save-error">Failed</span> ' + data.detail;
+  } catch (e) {
+    out.innerHTML = '<span class="save-error">Request failed</span>';
+  } finally {
+    this.disabled = false;
+  }
+});
+</script>
+{% endblock %}

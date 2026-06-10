@@ -38,6 +38,20 @@ class Loglens < Formula
     bin.install_symlink libexec/"bin/loglens"
   end
 
+  def caveats
+    <<~EOS
+      Set up configuration and your Anthropic API key:
+        loglens init      # writes config.toml + credentials.toml (0600) under
+                          #{etc}/loglens
+        # edit #{etc}/loglens/credentials.toml -> [anthropic] api_key = "sk-ant-..."
+        loglens check     # verify the key + model
+
+      When installed via Homebrew, LogLens uses #{etc}/loglens for config and
+      #{var}/loglens for state (these survive upgrades). Run with the offline
+      'stub' provider (no key) by setting extraction.provider = "stub".
+    EOS
+  end
+
   service do
     run [opt_bin/"loglens", "serve"]
     keep_alive true
@@ -48,5 +62,8 @@ class Loglens < Formula
 
   test do
     assert_match "loglens", shell_output("#{bin}/loglens --version")
+    # 'check' against the offline stub provider needs no network or API key.
+    output = shell_output("LOGLENS_EXTRACTION_PROVIDER=stub #{bin}/loglens check")
+    assert_match "stub", output
   end
 end

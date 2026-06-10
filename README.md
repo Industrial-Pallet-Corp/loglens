@@ -5,15 +5,24 @@ correctable summaries and **CSV exports**. Each PDF page is treated as one
 trip-log sheet.
 
 - **OCR / extraction:** a cloud vision LLM (Anthropic Claude by default) reads
-  the handwritten sheet and returns structured data. An offline `stub` provider
-  lets you run the whole app with no API key.
-- **Location resolution:** the messy/abbreviated *Place* column is matched
-  against a cached list of canonical locations using fuzzy matching plus a
-  shorthand alias map. In **Phase 1** that list comes from a seed file; **Phase
-  2** swaps in a live AWS Redshift source behind the same interface.
+  the handwritten sheet and returns *structured* data via a forced tool call,
+  with a per-field confidence score. An offline `stub` provider lets you run the
+  whole app with no API key.
+- **Confidence everywhere:** every extracted value carries a confidence (0-100);
+  fields are shaded yellow (medium confidence) or red (low confidence) for
+  review, and curated fields carry ranked next-best alternatives with one-click
+  swap.
+- **Curated reference lists:** four internally curated "source of truth" sets -
+  **locations, drivers, trucks, trailers** - live in SQLite, start empty, and
+  grow from your corrections. Raw OCR readings are reconciled against them
+  (learned shorthand first, then fuzzy match); unmatched readings pass through
+  as-is until you correct them. Saving a correction adds new values to the
+  lists and records the raw reading as learned shorthand for future sheets.
+  Manage all four lists on the Settings page.
 - **Review UI:** a side-by-side view of the scanned page and an editable table,
-  with low-confidence fields highlighted and one-click location suggestions.
-- **Export:** per-sheet and combined CSV.
+  with live per-page progress, confidence/validation shading, top-3 swap chips,
+  per-sheet *Re-run OCR* / *Re-resolve*, and inline saves.
+- **Export:** per-sheet and combined CSV (with parallel `*_confidence` columns).
 
 ## Quick start
 
@@ -36,44 +45,59 @@ LOGLENS_EXTRACTION_PROVIDER=stub loglens serve
 > reliable local runtime, create the venv outside any cloud-synced folder, e.g.
 > `python3.12 -m venv ~/.venvs/loglens`.
 
-To use real OCR, set an Anthropic key and use the default provider:
+To use real OCR, seed the config files, add your Anthropic key, and verify:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+loglens init               # writes config.toml + credentials.toml (0600)
+# put your key in credentials.toml ([anthropic] api_key = "sk-ant-...")
+loglens check              # validates the key + model with a tiny request
 loglens serve
 ```
 
+`ANTHROPIC_API_KEY` is also honored if you'd rather not use the credentials file.
+
 ## Configuration
 
-Create a config file (TOML):
+Settings live in two TOML files in the config directory:
+
+- `config.toml` — `[server]`, `[extraction]` (provider/model/render_dpi/max_tokens),
+  `[resolver]`.
+- `credentials.toml` — `[anthropic] api_key = "..."`, written `0600` and kept out
+  of version control.
 
 ```bash
-loglens init-config        # writes ~/.config/loglens/config.toml
+loglens init               # seeds both files and prints their paths
 ```
 
-Key settings: `extraction.provider` (`anthropic` | `stub`), `extraction.model`,
-`resolver.source` (`seed` for Phase 1), `resolver.seed_file`,
-`resolver.aliases_file`, `resolver.match_threshold`, and `server.host`/`port`.
-State (SQLite DB, uploads, page renders) lives under `~/.local/state/loglens`.
+**Config directory** discovery (first match wins): `--config-dir` flag >
+`LOGLENS_CONFIG_DIR` > Homebrew `etc/loglens` (only when installed via brew) >
+`~/.config/loglens`. **State** (SQLite DB, uploads, page renders) lives under
+`~/.local/state/loglens` (or the brew `var` dir / `LOGLENS_STATE_DIR`).
+
+Key settings: `extraction.provider` (`anthropic` | `stub`), `extraction.model`
+(`claude-sonnet-4-6` default; `claude-opus-4-8` for very messy handwriting),
+`resolver.match_threshold` (below this score a raw reading passes through
+unreconciled), `resolver.max_alternates`, and `server.host`/`port`.
 
 ## CLI
 
 ```
-loglens serve [--host H] [--port P]   # run the web server (default command)
-loglens init-config [--force]          # write a sample config
-loglens refresh-locations              # reload the locations cache from the source
+loglens serve [--host H] [--port P]    # run the web server (default command)
+loglens init [--force]                 # seed config.toml + credentials.toml
+loglens check                          # verify the extraction provider connection
 ```
 
-## Locations seed file
+All commands accept `--config-dir DIR` to point at a specific config directory.
 
-Phase 1 reads canonical locations from a CSV (`location_id,name` or a single
-`name` column) or YAML list, plus a shorthand `aliases.yaml`
-(`SHORTHAND: Canonical Name`). Defaults are bundled; override with
-`resolver.seed_file` / `resolver.aliases_file`.
+## Reference lists
 
-## Roadmap
+The four curated sets (locations, drivers, trucks, trailers) are stored in the
+SQLite database and managed entirely through the app:
 
-- **Phase 1 (this release):** web UI, PDF processing, vision-LLM extraction,
-  seed-based location resolution, review UI, CSV export, Homebrew packaging.
-- **Phase 2:** AWS Redshift read (locations sync) and write-back of processed
-  miles via the Data API.
+- They start empty. When a processed value can't be reconciled, the raw OCR
+  reading shows in the field; fix it (type-ahead suggests existing entries) and
+  hit *Save corrections* - the value joins its list, and the raw reading is
+  remembered as shorthand for that value (one canonical value can accumulate
+  any number of learned shorthands).
+- Edit, add, or remove entries and learned shorthand any time on the
+  **Settings** page.

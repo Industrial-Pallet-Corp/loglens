@@ -21,15 +21,20 @@ git -C homebrew-loglens init && git -C homebrew-loglens add . && git -C homebrew
 brew tap YOURORG/loglens
 brew install loglens
 
-# configure (API key, provider, port, etc.)
-loglens init-config
-$EDITOR ~/.config/loglens/config.toml      # set ANTHROPIC_API_KEY or use provider="stub"
+# configure: seed config.toml + credentials.toml (0600) under $(brew --prefix)/etc/loglens
+loglens init
+$EDITOR "$(brew --prefix)/etc/loglens/credentials.toml"   # [anthropic] api_key = "sk-ant-..."
+# (or set extraction.provider = "stub" in config.toml to run with no API key)
+loglens check                              # verify the key + model
 
 brew services start loglens                # persistent daemon (launchd/systemd)
 open http://127.0.0.1:8765
 ```
 
-Logs: `$(brew --prefix)/var/log/loglens.log`. Stop with `brew services stop loglens`.
+When installed via Homebrew, LogLens stores config under
+`$(brew --prefix)/etc/loglens` and state under `$(brew --prefix)/var/loglens`,
+both of which survive upgrades. Logs: `$(brew --prefix)/var/log/loglens.log`.
+Stop with `brew services stop loglens`.
 
 ## Cutting a release / pushing updates
 
