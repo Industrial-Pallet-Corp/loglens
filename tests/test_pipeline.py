@@ -1,4 +1,6 @@
+import re
 import time
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -6,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from loglens.app import create_app
 from loglens.config import Config, ExtractionConfig, ResolverConfig, ServerConfig
+from loglens.dates import normalize_date
 from loglens.reconcile import normalize
 
 
@@ -46,6 +49,47 @@ def _upload_and_wait(client) -> str:
 def test_normalize():
     assert normalize("  T+L N ") == "t l n"
     assert normalize("Random Hse!") == "random hse"
+
+
+def test_normalize_date():
+    midyear = date(2026, 6, 11)
+
+    # Common handwritten conventions, all coerced to mm/dd/yy.
+    assert normalize_date("6-26", midyear) == "06/26/26"
+    assert normalize_date("6/26", midyear) == "06/26/26"
+    assert normalize_date("06.26.26", midyear) == "06/26/26"
+    assert normalize_date("2026-06-26", midyear) == "06/26/26"
+    assert normalize_date("26/6", midyear) == "06/26/26"  # d/m swapped
+
+    # Off-year readings are forced to the current year.
+    assert normalize_date("6/26/25", midyear) == "06/26/26"
+    assert normalize_date("6/26/2031", midyear) == "06/26/26"
+
+    # Within a week of the year boundary, the adjacent year is allowed.
+    assert normalize_date("1/2/27", date(2026, 12, 28)) == "01/02/27"
+    assert normalize_date("12/30/26", date(2027, 1, 3)) == "12/30/26"
+    # ...but not outside that window.
+    assert normalize_date("1/2/27", midyear) == "01/02/26"
+
+    # Missing year near the boundary: best guess is the closest allowed year.
+    assert normalize_date("12-30", date(2027, 1, 3)) == "12/30/26"
+    assert normalize_date("1-2", date(2026, 12, 28)) == "01/02/27"
+
+    # Hopeless readings stay untouched (caller keeps the original value).
+    assert normalize_date("scribble", midyear) is None
+    assert normalize_date("2/30", midyear) is None
+    assert normalize_date(None, midyear) is None
+
+
+def test_extraction_normalizes_dates(app_client):
+    client, app = app_client
+    job_id = _upload_and_wait(client)
+
+    # Stub page 0 row 0 is dated "6-26"; the sheet-level date derives from it.
+    sheet = app.state.db.get_sheet(job_id, 0)
+    assert re.fullmatch(r"06/26/\d{2}", sheet.rows[0].date.value)
+    assert sheet.rows[0].date.raw == "6-26"
+    assert re.fullmatch(r"06/26/\d{2}", sheet.date.value)
 
 
 def test_lists_start_empty(app_client):
@@ -186,6 +230,20 @@ def test_settings_list_crud(app_client):
 
     # Unknown kinds are rejected
     assert client.post("/admin/lists/banana", data={"value": "x"}).status_code == 404
+
+    # Delete-all wipes one kind's values and aliases, leaving others intact.
+    for v in ("Central Hub", "Lakeside"):
+        client.post("/admin/lists/location", data={"value": v})
+    client.post("/admin/lists/driver", data={"value": "Joseph Vail"})
+    loc_id = db.list_ref_values("location")[0]["id"]
+    db.add_ref_alias("location", "CH", "ch", loc_id)
+
+    r = client.post("/admin/lists/location/clear", follow_redirects=False)
+    assert r.status_code == 303
+    assert db.list_ref_values("location") == []
+    assert db.list_ref_aliases("location") == []
+    assert [e["value"] for e in db.list_ref_values("driver")] == ["Joseph Vail"]
+    assert client.post("/admin/lists/banana/clear").status_code == 404
 
 
 def test_csv_export_uses_saved_values(app_client):

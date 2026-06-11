@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import __version__, ingest
 from .config import Config, get_config
+from .dates import normalize_sheet_dates
 from .db import Database
 from .export import sheet_to_csv, sheets_to_csv
 from .extraction import build_extractor
@@ -42,6 +43,7 @@ def _extract_one(app: FastAPI, job_id: str, pdf_path: Path, page_index: int) -> 
     try:
         png = ingest.page_png_bytes(pdf_path, page_index, dpi=cfg.extraction.render_dpi)
         sheet = extractor.extract(png, page_index)
+        sheet = normalize_sheet_dates(sheet)
         sheet = reconciler.reconcile_sheet(sheet)
         sheet.page_index = page_index
         sheet.status = "done"
@@ -412,6 +414,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     def delete_list_entry(kind: str, ref_id: int):
         _check_kind(kind)
         db().delete_ref_value(ref_id)
+        app.state.reconciler.invalidate()
+        return RedirectResponse(f"/settings#list-{kind}", status_code=303)
+
+    @app.post("/admin/lists/{kind}/clear")
+    def clear_list(kind: str):
+        _check_kind(kind)
+        db().clear_ref_kind(kind)
         app.state.reconciler.invalidate()
         return RedirectResponse(f"/settings#list-{kind}", status_code=303)
 

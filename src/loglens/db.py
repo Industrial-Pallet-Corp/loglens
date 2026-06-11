@@ -254,6 +254,14 @@ class Database:
             self._conn.execute("DELETE FROM ref_values WHERE id = ?", (ref_id,))
             self._conn.commit()
 
+    def clear_ref_kind(self, kind: str) -> None:
+        """Delete every canonical value and learned alias for one kind."""
+
+        with self._lock:
+            self._conn.execute("DELETE FROM ref_aliases WHERE kind = ?", (kind,))
+            self._conn.execute("DELETE FROM ref_values WHERE kind = ?", (kind,))
+            self._conn.commit()
+
     def ref_counts(self) -> dict[str, int]:
         rows = self._conn.execute(
             "SELECT kind, COUNT(*) AS c FROM ref_values GROUP BY kind"

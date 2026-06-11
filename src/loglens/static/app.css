@@ -62,11 +62,6 @@ button, .button {
 button.secondary, .button.secondary { background: #fff; color: var(--ink); border-color: var(--line); }
 button.link { border: none; background: none; color: var(--accent); padding: 0; cursor: pointer; }
 button.link.danger { color: var(--danger); }
-button.alt {
-  border: 1px solid var(--line); background: #fff; color: var(--ink);
-  padding: .12rem .4rem; font-size: .76rem; border-radius: 999px; margin: .15rem .15rem 0 0;
-}
-
 .upload { display: flex; gap: .6rem; align-items: center; margin: .6rem 0; flex-wrap: wrap; }
 .inline { display: inline; }
 
@@ -97,7 +92,10 @@ table.rows input { width: 100%; }
 
 td.resolve { min-width: 220px; }
 input.unresolved { border-color: var(--danger); background: #fff6f5; }
-.alts { margin-top: .15rem; }
+/* Datalist-bound inputs: keep typing autocomplete, but hide the built-in
+   drop-down arrow pip so all fields look like bare text fields. */
+input::-webkit-calendar-picker-indicator { display: none !important; }
+input::-webkit-list-button { display: none !important; }
 
 /* Confidence band shading (numeric confidence is hidden by design) */
 input.conf-mid { background: var(--flag); border-color: var(--flag-line); }

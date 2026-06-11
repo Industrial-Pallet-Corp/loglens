@@ -87,18 +87,6 @@ document.addEventListener("keydown", function (event) {
   if (target.select) target.select();
 });
 
-// Clicking an alternate suggestion fills the target (resolved-location) input.
-document.addEventListener("click", function (event) {
-  const btn = event.target.closest("button.alt");
-  if (!btn) return;
-  const input = document.getElementsByName(btn.dataset.target)[0];
-  if (input) {
-    input.value = btn.dataset.value;
-    refreshCorrected(input);
-    input.focus();
-  }
-});
-
 // Inline save: submit only the corrected/confirmed (green) fields via fetch,
 // preserving scroll position. Falls back to a normal full POST when JS is off.
 document.addEventListener("submit", async function (event) {

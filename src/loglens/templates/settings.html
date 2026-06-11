@@ -41,7 +41,15 @@
 
   {% for kind, entries in ref_lists.items() %}
   <div class="ref-list" id="list-{{ kind }}">
-    <h2>{{ kind_labels[kind] }} <span class="muted">({{ entries|length }})</span></h2>
+    <div class="row-between">
+      <h2>{{ kind_labels[kind] }} <span class="muted">({{ entries|length }})</span></h2>
+      {% if entries %}
+      <form method="post" action="/admin/lists/{{ kind }}/clear" class="inline">
+        <button type="submit" class="link danger"
+                title="Delete all learned {{ kind_labels[kind]|lower }} and their shorthands">delete all</button>
+      </form>
+      {% endif %}
+    </div>
     {% if entries %}
     <table class="list">
       <thead><tr><th>Value</th><th>Learned shorthand</th><th></th></tr></thead>
