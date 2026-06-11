@@ -43,18 +43,30 @@ document.addEventListener("focusin", function (event) {
   markCorrected(input, "Confirmed - saved when you press Save corrections");
 });
 
-// Tab / Shift+Tab moves between fields that still need review (shaded yellow
-// or red), skipping high-confidence and already-confirmed fields. Falls back
-// to native tabbing when no shaded field remains in that direction.
+// Tab / Shift+Tab cycles round and round through the colored fields (shaded
+// yellow/red, or green pending corrections) of the card the focus is in,
+// wrapping at either end. It never leaves the card: moving to another card
+// takes a deliberate click, as does pressing Save corrections. Once the card
+// is all white (corrections saved), Tab does nothing. Outside a card, native
+// tabbing applies.
 document.addEventListener("keydown", function (event) {
   if (event.key !== "Tab") return;
+  const active = document.activeElement;
+  const form = active && active.closest && active.closest("form.sheet-form");
+  if (!form) return;
+  event.preventDefault();
   const fields = Array.from(
-    document.querySelectorAll("form.sheet-form input.conf-low, form.sheet-form input.conf-mid")
+    form.querySelectorAll("input.conf-low, input.conf-mid, input.conf-corrected")
   );
   if (!fields.length) return;
-  const active = document.activeElement;
-  let target = null;
-  if (event.shiftKey) {
+  let target;
+  const idx = fields.indexOf(active);
+  if (idx !== -1) {
+    target = fields[(idx + (event.shiftKey ? -1 : 1) + fields.length) % fields.length];
+  } else if (event.shiftKey) {
+    // From an uncolored spot in the card: nearest colored field before it,
+    // wrapping to the last.
+    target = fields[fields.length - 1];
     for (let i = fields.length - 1; i >= 0; i--) {
       if (active.compareDocumentPosition(fields[i]) & Node.DOCUMENT_POSITION_PRECEDING) {
         target = fields[i];
@@ -62,6 +74,8 @@ document.addEventListener("keydown", function (event) {
       }
     }
   } else {
+    // Nearest colored field after it, wrapping to the first.
+    target = fields[0];
     for (const field of fields) {
       if (active.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING) {
         target = field;
@@ -69,11 +83,8 @@ document.addEventListener("keydown", function (event) {
       }
     }
   }
-  if (target) {
-    event.preventDefault();
-    target.focus();
-    if (target.select) target.select();
-  }
+  target.focus();
+  if (target.select) target.select();
 });
 
 // Clicking an alternate suggestion fills the target (resolved-location) input.
