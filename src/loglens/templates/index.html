@@ -30,8 +30,7 @@
         <td><span class="badge badge-{{ job.status }}">{{ job.status }}</span></td>
         <td>{{ job.page_count }}</td>
         <td>
-          <form action="/jobs/{{ job.id }}/delete" method="post"
-                onsubmit="return confirm('Delete this job?')">
+          <form action="/jobs/{{ job.id }}/delete" method="post">
             <button type="submit" class="link danger">delete</button>
           </form>
         </td>

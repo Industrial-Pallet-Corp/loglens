@@ -1,14 +1,21 @@
-// Mark a field "corrected" (light green) while its value differs from what was
-// loaded; reverting the edit restores the original confidence shading.
+// Mark a field "corrected" (light green): it will be committed on save.
+function markCorrected(input, title) {
+  if (input.dataset.origClass === undefined) {
+    input.dataset.origClass = input.className;
+    input.dataset.origTitle = input.title || "";
+  }
+  input.classList.remove("conf-low", "conf-mid", "unresolved");
+  input.classList.add("conf-corrected");
+  input.title = title;
+}
+
+// Shade a field while its value differs from what was loaded; reverting the
+// edit restores the original confidence shading (unless it was touch-confirmed).
 function refreshCorrected(input) {
   if (input.value !== input.defaultValue) {
-    if (input.dataset.origClass === undefined) {
-      input.dataset.origClass = input.className;
-      input.dataset.origTitle = input.title || "";
-    }
-    input.classList.remove("conf-low", "conf-mid", "unresolved");
-    input.classList.add("conf-corrected");
-    input.title = "Corrected - saved when you press Save corrections";
+    markCorrected(input, "Corrected - saved when you press Save corrections");
+  } else if (input.dataset.confirmed === "1") {
+    // Touch-confirmed at its original value: stays green.
   } else if (input.dataset.origClass !== undefined) {
     input.className = input.dataset.origClass;
     input.title = input.dataset.origTitle;
@@ -24,6 +31,51 @@ document.addEventListener("input", function (event) {
   }
 });
 
+// Confirm-by-touch: focusing a shaded (low/mid confidence) field counts as the
+// user verifying it, even with no edit. It turns green and is saved as a
+// user-confirmed value on "Save corrections".
+document.addEventListener("focusin", function (event) {
+  const input = event.target;
+  if (!(input.matches && input.matches("form.sheet-form input"))) return;
+  if (!input.classList.contains("conf-low") && !input.classList.contains("conf-mid")) return;
+  if (!input.value.trim()) return; // nothing to confirm in an empty field
+  input.dataset.confirmed = "1";
+  markCorrected(input, "Confirmed - saved when you press Save corrections");
+});
+
+// Tab / Shift+Tab moves between fields that still need review (shaded yellow
+// or red), skipping high-confidence and already-confirmed fields. Falls back
+// to native tabbing when no shaded field remains in that direction.
+document.addEventListener("keydown", function (event) {
+  if (event.key !== "Tab") return;
+  const fields = Array.from(
+    document.querySelectorAll("form.sheet-form input.conf-low, form.sheet-form input.conf-mid")
+  );
+  if (!fields.length) return;
+  const active = document.activeElement;
+  let target = null;
+  if (event.shiftKey) {
+    for (let i = fields.length - 1; i >= 0; i--) {
+      if (active.compareDocumentPosition(fields[i]) & Node.DOCUMENT_POSITION_PRECEDING) {
+        target = fields[i];
+        break;
+      }
+    }
+  } else {
+    for (const field of fields) {
+      if (active.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING) {
+        target = field;
+        break;
+      }
+    }
+  }
+  if (target) {
+    event.preventDefault();
+    target.focus();
+    if (target.select) target.select();
+  }
+});
+
 // Clicking an alternate suggestion fills the target (resolved-location) input.
 document.addEventListener("click", function (event) {
   const btn = event.target.closest("button.alt");
@@ -36,13 +88,23 @@ document.addEventListener("click", function (event) {
   }
 });
 
-// Inline save: submit sheet corrections via fetch and show a confirmation,
-// preserving scroll position. Falls back to a normal POST when JS is off.
+// Inline save: submit only the corrected/confirmed (green) fields via fetch,
+// preserving scroll position. Falls back to a normal full POST when JS is off.
 document.addEventListener("submit", async function (event) {
   const form = event.target;
   if (!form.classList.contains("sheet-form")) return;
   event.preventDefault();
   const status = form.querySelector(".save-status");
+  const corrected = form.querySelectorAll("input.conf-corrected");
+  if (!corrected.length) {
+    if (status) status.textContent = "Nothing to save";
+    return;
+  }
+  const data = new FormData();
+  corrected.forEach(function (input) {
+    data.append(input.name, input.value);
+  });
+  data.append("_explicit", "1");
   const btn = form.querySelector('button[type="submit"]');
   if (btn) btn.disabled = true;
   if (status) status.textContent = "Saving...";
@@ -50,20 +112,19 @@ document.addEventListener("submit", async function (event) {
     const resp = await fetch(form.action, {
       method: "POST",
       headers: { "X-Inline": "1" },
-      body: new FormData(form),
+      body: data,
     });
     if (!resp.ok) throw new Error(resp.statusText);
     if (status) status.innerHTML = '<span class="saved">Saved \u2713</span>';
     // Corrections are committed: clear the green shading and make the saved
     // values the new baseline (user-confirmed fields are no longer shaded).
-    form.querySelectorAll("input").forEach(function (input) {
+    corrected.forEach(function (input) {
       input.defaultValue = input.value;
-      if (input.classList.contains("conf-corrected")) {
-        input.classList.remove("conf-corrected");
-        input.removeAttribute("title");
-        delete input.dataset.origClass;
-        delete input.dataset.origTitle;
-      }
+      input.classList.remove("conf-corrected");
+      input.removeAttribute("title");
+      delete input.dataset.origClass;
+      delete input.dataset.origTitle;
+      delete input.dataset.confirmed;
     });
   } catch (e) {
     if (status) status.innerHTML = '<span class="save-error">Save failed</span>';

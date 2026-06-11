@@ -22,7 +22,7 @@ from .config import Config, get_config
 from .db import Database
 from .export import sheet_to_csv, sheets_to_csv
 from .extraction import build_extractor
-from .models import CODE_OPTIONS, FieldValue, Sheet
+from .models import CODE_OPTIONS, MED_CONFIDENCE, FieldValue, Sheet
 from .reconcile import KIND_LABELS, REF_KINDS, Reconciler
 from .resources import static_dir, templates_dir
 from .validate import sheet_warnings
@@ -79,8 +79,14 @@ def _process_job(app: FastAPI, job_id: str, pdf_path: Path, page_count: int) -> 
         db.set_job_status(job_id, "error", error=f"{type(exc).__name__}: {exc}")
 
 
-def _apply_field(fv: FieldValue, raw: str | None) -> None:
-    """Write an edited value onto a FieldValue, pinning user edits as confident."""
+def _apply_field(fv: FieldValue, raw: str | None, confirm: bool = False) -> None:
+    """Write an edited value onto a FieldValue, pinning user edits as confident.
+
+    With ``confirm`` (explicit saves, where the client only posts deliberately
+    corrected/confirmed fields), an unchanged value is still pinned as
+    user-confirmed ("confirm by touch"); its ref_id is kept since the value
+    itself did not change.
+    """
 
     new = (raw or "").strip() or None
     if new != fv.value:
@@ -88,6 +94,9 @@ def _apply_field(fv: FieldValue, raw: str | None) -> None:
         fv.source = "user"
         fv.confidence = 100.0 if new else None
         fv.ref_id = None
+    elif confirm and new is not None:
+        fv.source = "user"
+        fv.confidence = 100.0
 
 
 def _ocr_reading(fv: FieldValue) -> str | None:
@@ -102,12 +111,18 @@ def _apply_form(sheet: Sheet, form: dict[str, str]) -> Sheet:
     """Apply edited form values back onto a sheet (human edits => source=user).
 
     Only keys present in the form are applied, so a partial post never wipes
-    fields it didn't include.
+    fields it didn't include. An ``_explicit`` marker (set by the inline-save
+    JS, which posts only corrected/confirmed fields) means every submitted
+    field is a deliberate user action, so unchanged values are pinned as
+    user-confirmed too. Without it (no-JS full-form post), only changed
+    values are pinned.
     """
+
+    confirm = form.get("_explicit") == "1"
 
     def apply(fv: FieldValue, key: str) -> None:
         if key in form:
-            _apply_field(fv, form[key])
+            _apply_field(fv, form[key], confirm)
 
     apply(sheet.driver, "driver")
     apply(sheet.date, "date")
@@ -129,12 +144,26 @@ def _apply_form(sheet: Sheet, form: dict[str, str]) -> Sheet:
     return sheet
 
 
+def _learnable(fv: FieldValue) -> bool:
+    """Whether a field's value is trustworthy enough to enter the known lists.
+
+    Only user-corrected/confirmed values or high-confidence readings qualify;
+    mid/low confidence values are never learned automatically.
+    """
+
+    if not fv.value:
+        return False
+    if fv.source == "user":
+        return True
+    return fv.confidence is not None and fv.confidence >= MED_CONFIDENCE
+
+
 def _learn_from_sheet(reconciler: Reconciler, sheet: Sheet) -> None:
     """Grow the reference lists from a saved (human-confirmed) sheet.
 
-    Every non-empty value in the four curated kinds is ensured to exist in its
-    list, and the original OCR reading is recorded as a learned alias whenever
-    it differs from the saved canonical value.
+    Learnable values (see ``_learnable``) in the four curated kinds are ensured
+    to exist in their list, and the original OCR reading is recorded as a
+    learned alias whenever it differs from the saved canonical value.
     """
 
     pairs: list[tuple[str, FieldValue, str | None]] = [
@@ -146,7 +175,7 @@ def _learn_from_sheet(reconciler: Reconciler, sheet: Sheet) -> None:
         pairs.append(("trailer", row.trailer_no, _ocr_reading(row.trailer_no)))
 
     for kind, fv, raw in pairs:
-        if not fv.value:
+        if not _learnable(fv):
             continue
         ref_id = reconciler.learn(kind, fv.value, raw)
         if ref_id is not None:
@@ -165,6 +194,16 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     templates = Jinja2Templates(directory=str(templates_dir()))
     app.mount("/static", StaticFiles(directory=str(static_dir())), name="static")
+
+    @app.middleware("http")
+    async def static_no_cache(request: Request, call_next):
+        # Without this, browsers heuristically cache /static assets and can
+        # keep serving stale JS/CSS after an upgrade. "no-cache" forces a
+        # revalidation (cheap 304) on every load.
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     def db() -> Database:
         return app.state.db

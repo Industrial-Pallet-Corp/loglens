@@ -100,6 +100,65 @@ def test_passthrough_then_learn_then_reconcile(app_client):
     assert ch_rows[0].place.confidence and ch_rows[0].place.confidence >= 90
 
 
+def test_explicit_save_pins_only_submitted_fields(app_client):
+    client, app = app_client
+    job_id = _upload_and_wait(client)
+
+    # Confirm-by-touch: the driver is posted unchanged with the explicit
+    # marker, so it is pinned as user-confirmed; nothing else is touched.
+    r = client.post(
+        f"/jobs/{job_id}/sheets/0/save",
+        data={"_explicit": "1", "driver": "Joe Vail"},
+        headers={"X-Inline": "1"},
+    )
+    assert r.status_code == 200
+
+    sheet = app.state.db.get_sheet(job_id, 0)
+    assert sheet.driver.source == "user"
+    assert sheet.driver.confidence == 100.0
+    # Unsubmitted fields keep their OCR provenance and confidence.
+    assert sheet.truck_no.source == "ocr"
+    assert sheet.truck_no.confidence == 96.0
+    assert sheet.rows[1].place.value == "Emerson Inno"
+    assert sheet.rows[1].place.source == "ocr"
+
+
+def test_learning_gate(app_client):
+    client, app = app_client
+    db = app.state.db
+    job_id = _upload_and_wait(client)
+
+    # Stub page 0: driver/truck and most places are high confidence (96), but
+    # row 1's place "Emerson Inno" is low confidence (42).
+    r = client.post(
+        f"/jobs/{job_id}/sheets/0/save",
+        data={"_explicit": "1", "driver": "Joseph Vail"},
+        headers={"X-Inline": "1"},
+    )
+    assert r.status_code == 200
+
+    drivers = [e["value"] for e in db.list_ref_values("driver")]
+    trucks = [e["value"] for e in db.list_ref_values("truck")]
+    locations = [e["value"] for e in db.list_ref_values("location")]
+    assert "Joseph Vail" in drivers  # user-corrected
+    assert "295-581" in trucks  # high confidence (96)
+    assert "CH" in locations  # high confidence passthrough
+    assert "Emerson Inno" not in locations  # low confidence: never learned
+
+    # A deliberate correction of the low-confidence field is learned, along
+    # with the raw OCR reading as an alias.
+    r = client.post(
+        f"/jobs/{job_id}/sheets/0/save",
+        data={"_explicit": "1", "row-1-place": "Emerson Innovations"},
+        headers={"X-Inline": "1"},
+    )
+    assert r.status_code == 200
+    locations = [e["value"] for e in db.list_ref_values("location")]
+    assert "Emerson Innovations" in locations
+    aliases = {a["raw"]: a["value"] for a in db.list_ref_aliases("location")}
+    assert aliases.get("Emerson Inno") == "Emerson Innovations"
+
+
 def test_settings_list_crud(app_client):
     client, app = app_client
     db = app.state.db

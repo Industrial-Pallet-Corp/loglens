@@ -60,7 +60,6 @@
           </td>
           <td class="row-actions">
             <form method="post" action="/admin/lists/{{ kind }}/{{ e.id }}/delete"
-                  onsubmit="return confirm('Remove {{ e.value }} from {{ kind_labels[kind] }}?')"
                   class="inline">
               <button type="submit" class="link danger">remove</button>
             </form>
