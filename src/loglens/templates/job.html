@@ -10,17 +10,20 @@
       <a class="button secondary" href="/">Back</a>
     </div>
   </div>
-  <p class="muted">
-    Status: <span class="badge badge-{{ job.status }}" data-job-status>{{ job.status }}</span>
-    &middot; {{ sheets|length }} sheet(s)
-    {% if input_tokens or output_tokens %}
-    &middot; tokens: {{ input_tokens }} in / {{ output_tokens }} out
-    {% endif %}
-  </p>
-  <p class="legend muted">
-    <span class="swatch swatch-mid"></span> medium confidence
-    <span class="swatch swatch-low"></span> low confidence
-  </p>
+  <div class="status-row">
+    <p class="muted">
+      Status: <span class="badge badge-{{ job.status }}" data-job-status>{{ job.status }}</span>
+      &middot; {{ sheets|length }} sheet(s)
+      {% if input_tokens or output_tokens %}
+      &middot; tokens: {{ input_tokens }} in / {{ output_tokens }} out
+      {% endif %}
+    </p>
+    <p class="legend muted">
+      <span class="swatch swatch-mid"></span> medium confidence
+      <span class="swatch swatch-low"></span> low confidence
+      <span class="swatch swatch-corrected"></span> corrected
+    </p>
+  </div>
   {% if not finished %}
   <div class="progress"><div class="progress-bar" data-progress-bar></div></div>
   <p class="muted" data-progress-text>Processing pages...</p>

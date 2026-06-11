@@ -1,3 +1,29 @@
+// Mark a field "corrected" (light green) while its value differs from what was
+// loaded; reverting the edit restores the original confidence shading.
+function refreshCorrected(input) {
+  if (input.value !== input.defaultValue) {
+    if (input.dataset.origClass === undefined) {
+      input.dataset.origClass = input.className;
+      input.dataset.origTitle = input.title || "";
+    }
+    input.classList.remove("conf-low", "conf-mid", "unresolved");
+    input.classList.add("conf-corrected");
+    input.title = "Corrected - saved when you press Save corrections";
+  } else if (input.dataset.origClass !== undefined) {
+    input.className = input.dataset.origClass;
+    input.title = input.dataset.origTitle;
+    delete input.dataset.origClass;
+    delete input.dataset.origTitle;
+  }
+}
+
+document.addEventListener("input", function (event) {
+  const input = event.target;
+  if (input.matches && input.matches("form.sheet-form input")) {
+    refreshCorrected(input);
+  }
+});
+
 // Clicking an alternate suggestion fills the target (resolved-location) input.
 document.addEventListener("click", function (event) {
   const btn = event.target.closest("button.alt");
@@ -5,8 +31,7 @@ document.addEventListener("click", function (event) {
   const input = document.getElementsByName(btn.dataset.target)[0];
   if (input) {
     input.value = btn.dataset.value;
-    input.classList.remove("unresolved", "conf-low", "conf-mid");
-    input.removeAttribute("title");
+    refreshCorrected(input);
     input.focus();
   }
 });
@@ -29,6 +54,17 @@ document.addEventListener("submit", async function (event) {
     });
     if (!resp.ok) throw new Error(resp.statusText);
     if (status) status.innerHTML = '<span class="saved">Saved \u2713</span>';
+    // Corrections are committed: clear the green shading and make the saved
+    // values the new baseline (user-confirmed fields are no longer shaded).
+    form.querySelectorAll("input").forEach(function (input) {
+      input.defaultValue = input.value;
+      if (input.classList.contains("conf-corrected")) {
+        input.classList.remove("conf-corrected");
+        input.removeAttribute("title");
+        delete input.dataset.origClass;
+        delete input.dataset.origTitle;
+      }
+    });
   } catch (e) {
     if (status) status.innerHTML = '<span class="save-error">Save failed</span>';
   } finally {

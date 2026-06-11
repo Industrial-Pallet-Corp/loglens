@@ -102,13 +102,20 @@ input.unresolved { border-color: var(--danger); background: #fff6f5; }
 /* Confidence band shading (numeric confidence is hidden by design) */
 input.conf-mid { background: var(--flag); border-color: var(--flag-line); }
 input.conf-low { background: #fde2df; border-color: var(--danger); }
+/* User-edited, pending "Save corrections" */
+input.conf-corrected { background: #dcf5e6; border-color: var(--ok); }
+
+/* Status line with right-justified legend */
+.status-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.status-row p { margin: .25rem 0; }
 
 /* Legend */
 .legend { display: flex; align-items: center; gap: .4rem; font-size: .8rem; }
 .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.swatch:not(:first-child) { margin-left: .6rem; }
 .swatch-mid { background: var(--flag); border: 1px solid var(--flag-line); }
 .swatch-low { background: #fde2df; border: 1px solid var(--danger); }
-.swatch-low { margin-left: .6rem; }
+.swatch-corrected { background: #dcf5e6; border: 1px solid var(--ok); }
 
 /* Field value wrapper (input + confidence chip) */
 .fv { display: flex; flex-direction: column; gap: .15rem; }
