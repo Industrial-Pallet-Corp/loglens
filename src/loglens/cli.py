@@ -24,6 +24,10 @@ provider = "anthropic"          # anthropic | stub
 model = "claude-sonnet-4-6"     # or "claude-opus-4-8" for very messy handwriting
 render_dpi = 200
 max_tokens = 4096
+# Pages of the active job OCR'd concurrently (hard ceiling 25). The default
+# of 10 suits Anthropic Tier 2+ accounts; on Tier 1 set this to 2-3 to stay
+# under the 8k output-tokens/min limit.
+parallel_pages = 10
 
 [resolver]
 match_threshold = 70            # 0-100; below this a raw reading passes through

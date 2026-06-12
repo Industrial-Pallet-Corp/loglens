@@ -38,6 +38,11 @@ class ExtractionConfig:
     max_tokens: int = 4096
     render_dpi: int = 200
     max_retries: int = 3  # transient API failures
+    # Pages of the active job extracted concurrently. Sized against Anthropic
+    # per-model rate limits (output tokens/min binds first: ~2k/page). The
+    # worker clamps this to a hard ceiling of 25; Tier 1 accounts should use
+    # 2-3. See worker.py for the budget math.
+    parallel_pages: int = 10
 
     def resolve_api_key(self) -> str | None:
         return (
@@ -129,6 +134,7 @@ def load_config(config_dir: str | os.PathLike[str] | None = None) -> Config:
         max_tokens=int(ex.get("max_tokens", 4096)),
         render_dpi=int(ex.get("render_dpi", 200)),
         max_retries=int(ex.get("max_retries", 3)),
+        parallel_pages=int(ex.get("parallel_pages", 10)),
     )
 
     rs = raw.get("resolver", {})

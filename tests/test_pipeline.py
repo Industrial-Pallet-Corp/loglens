@@ -1,4 +1,5 @@
 import re
+import threading
 import time
 from datetime import date
 from pathlib import Path
@@ -12,19 +13,23 @@ from loglens.dates import normalize_date
 from loglens.reconcile import normalize
 
 
-@pytest.fixture
-def app_client(tmp_path):
+def _make_app(tmp_path, parallel_pages: int = 10):
     cfg = Config(
         state_dir=tmp_path,
         server=ServerConfig(),
-        extraction=ExtractionConfig(provider="stub"),
+        extraction=ExtractionConfig(provider="stub", parallel_pages=parallel_pages),
         resolver=ResolverConfig(),
     )
     app = create_app(cfg)
     return TestClient(app), app
 
 
-def _upload_and_wait(client) -> str:
+@pytest.fixture
+def app_client(tmp_path):
+    return _make_app(tmp_path)
+
+
+def _upload(client) -> str:
     pdf = Path(__file__).resolve().parents[1] / "driver.pdf"
     if not pdf.exists():
         pytest.skip("sample driver.pdf not present")
@@ -35,14 +40,23 @@ def _upload_and_wait(client) -> str:
             follow_redirects=True,
         )
     assert r.status_code == 200
-    job_id = r.url.path.split("/jobs/")[1]
+    return r.url.path.split("/jobs/")[1]
+
+
+def _wait(client, job_id: str, timeout: float = 15.0) -> dict:
     status = {"finished": False}
-    for _ in range(150):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
         status = client.get(f"/jobs/{job_id}/status").json()
         if status["finished"]:
-            break
-        time.sleep(0.1)
-    assert status["finished"], "job did not finish in time"
+            return status
+        time.sleep(0.05)
+    raise AssertionError("job did not finish in time")
+
+
+def _upload_and_wait(client) -> str:
+    job_id = _upload(client)
+    _wait(client, job_id)
     return job_id
 
 
@@ -244,6 +258,126 @@ def test_settings_list_crud(app_client):
     assert db.list_ref_aliases("location") == []
     assert [e["value"] for e in db.list_ref_values("driver")] == ["Joseph Vail"]
     assert client.post("/admin/lists/banana/clear").status_code == 404
+
+
+def _gate_extraction(monkeypatch):
+    """Patch _extract_one so pages block until the test releases them."""
+
+    import loglens.app as app_mod
+
+    original = app_mod._extract_one
+    release = threading.Event()
+    calls: list[tuple[str, int]] = []
+
+    def gated(appx, job_id, pdf, page):
+        calls.append((job_id, page))
+        release.wait(timeout=10)
+        original(appx, job_id, pdf, page)
+
+    monkeypatch.setattr(app_mod, "_extract_one", gated)
+    return release, calls
+
+
+def _wait_for(predicate, timeout: float = 5.0) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return
+        time.sleep(0.02)
+    raise AssertionError("condition not met in time")
+
+
+def test_queue_serializes_jobs(tmp_path, monkeypatch):
+    client, app = _make_app(tmp_path)
+    release, calls = _gate_extraction(monkeypatch)
+
+    job_a = _upload(client)
+    _wait_for(lambda: calls)  # A's pages are in flight (blocked)
+
+    job_b = _upload(client)
+    assert app.state.db.get_job(job_b)["status"] == "queued"
+
+    # Live status: A processing, B waiting; the jobs list shows it.
+    active = {j["id"]: j for j in client.get("/status/active").json()["jobs"]}
+    assert active[job_a]["status"] == "processing"
+    assert active[job_b]["status"] == "queued"
+    page = client.get("/").text
+    assert "Waiting..." in page
+
+    release.set()
+    _wait(client, job_a)
+    _wait(client, job_b)
+
+    # Strict FIFO: every page of A was dispatched before any page of B.
+    a_idx = [i for i, (j, _) in enumerate(calls) if j == job_a]
+    b_idx = [i for i, (j, _) in enumerate(calls) if j == job_b]
+    assert a_idx and b_idx and max(a_idx) < min(b_idx)
+    assert client.get("/status/active").json()["jobs"] == []
+
+    # Progress counts are exposed on the jobs list query.
+    jobs = {j["id"]: j for j in app.state.db.list_jobs()}
+    assert jobs[job_a]["done_pages"] == jobs[job_a]["page_count"]
+
+
+def test_cancel_queued_job(tmp_path, monkeypatch):
+    client, app = _make_app(tmp_path)
+    release, calls = _gate_extraction(monkeypatch)
+
+    job_a = _upload(client)
+    _wait_for(lambda: calls)
+    job_b = _upload(client)
+
+    r = client.post(f"/jobs/{job_b}/cancel", follow_redirects=False)
+    assert r.status_code == 303
+    assert app.state.db.get_job(job_b)["status"] == "cancelled"
+    assert client.get(f"/jobs/{job_b}/status").json()["finished"] is True
+    statuses = {s["status"] for s in app.state.db.sheet_statuses(job_b)}
+    assert statuses == {"cancelled"}
+
+    release.set()
+    _wait(client, job_a)
+    # The worker must never have touched the cancelled job.
+    assert all(j == job_a for (j, _) in calls)
+
+
+def test_cancel_mid_processing(tmp_path, monkeypatch):
+    # parallel_pages=1 so later pages are still undispatched when we cancel.
+    client, app = _make_app(tmp_path, parallel_pages=1)
+    release, calls = _gate_extraction(monkeypatch)
+
+    job_id = _upload(client)
+    _wait_for(lambda: calls)  # page 0 in flight, the rest waiting
+
+    r = client.post(f"/jobs/{job_id}/cancel", follow_redirects=False)
+    assert r.status_code == 303
+    assert app.state.db.get_job(job_id)["status"] == "cancelling"
+
+    release.set()
+    status = _wait(client, job_id)
+    assert status["job_status"] == "cancelled"
+
+    sheets = {s["page_index"]: s["status"] for s in app.state.db.sheet_statuses(job_id)}
+    assert sheets[0] == "done"  # the in-flight page was allowed to finish
+    assert all(v == "cancelled" for k, v in sheets.items() if k != 0)
+    assert calls == [(job_id, 0)]  # no further pages were started
+
+    # The page still renders: done sheet editable, the rest marked cancelled.
+    page = client.get(f"/jobs/{job_id}").text
+    assert "sheet-form" in page
+    assert "Cancelled before processing." in page
+
+
+def test_sheet_fragment_endpoint(app_client):
+    client, app = app_client
+    job_id = _upload_and_wait(client)
+
+    r = client.get(f"/jobs/{job_id}/sheets/0/html")
+    assert r.status_code == 200
+    assert 'id="sheet-0"' in r.text
+    assert 'data-sheet-status="done"' in r.text
+    assert "sheet-form" in r.text
+    assert "<html" not in r.text.lower()  # a fragment, not a full page
+    assert client.get(f"/jobs/{job_id}/sheets/99/html").status_code == 404
 
 
 def test_csv_export_uses_saved_values(app_client):

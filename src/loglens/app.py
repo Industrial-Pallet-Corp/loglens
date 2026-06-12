@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-import threading
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -27,6 +26,7 @@ from .models import CODE_OPTIONS, MED_CONFIDENCE, FieldValue, Sheet
 from .reconcile import KIND_LABELS, REF_KINDS, Reconciler
 from .resources import static_dir, templates_dir
 from .validate import sheet_warnings
+from .worker import JobQueue, recover_interrupted_jobs
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
 
@@ -69,16 +69,24 @@ def _finalize_job_status(app: FastAPI, job_id: str) -> None:
         db.set_job_status(job_id, "done", error="")
 
 
-def _process_job(app: FastAPI, job_id: str, pdf_path: Path, page_count: int) -> None:
-    """Background worker: extract every page, then finalize job status."""
+FINISHED_STATUSES = ("done", "error", "cancelled")
+ACTIVE_STATUSES = ("pending", "queued", "processing", "cancelling")
 
-    db: Database = app.state.db
-    try:
-        for i in range(page_count):
-            _extract_one(app, job_id, pdf_path, i)
-        _finalize_job_status(app, job_id)
-    except Exception as exc:  # noqa: BLE001
-        db.set_job_status(job_id, "error", error=f"{type(exc).__name__}: {exc}")
+
+def _overlay_live_status(db: Database, job_id: str, sheets: list[Sheet]) -> None:
+    """Apply the live status column onto loaded sheets.
+
+    The stored sheet JSON only changes when extraction finishes, while the
+    sheets.status column tracks pending/processing/cancelled transitions live;
+    rendering should always reflect the column.
+    """
+
+    by_page = {s["page_index"]: s for s in db.sheet_statuses(job_id)}
+    for sheet in sheets:
+        live = by_page.get(sheet.page_index)
+        if live:
+            sheet.status = live["status"]
+            sheet.error = live["error"] or sheet.error
 
 
 def _apply_field(fv: FieldValue, raw: str | None, confirm: bool = False) -> None:
@@ -193,6 +201,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     app.state.db = Database(cfg.db_path)
     app.state.extractor = build_extractor(cfg.extraction)
     app.state.reconciler = Reconciler(app.state.db, cfg.resolver)
+    app.state.queue = JobQueue(app)
+    recover_interrupted_jobs(app)
 
     templates = Jinja2Templates(directory=str(templates_dir()))
     app.mount("/static", StaticFiles(directory=str(static_dir())), name="static")
@@ -259,13 +269,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             db().set_job_status(job_id, "error", error="PDF has no pages.")
             return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
-        db().set_job_status(job_id, "processing", page_count=n)
+        db().set_job_status(job_id, "queued", page_count=n)
         for i in range(n):
             db().upsert_sheet(job_id, Sheet(page_index=i, status="pending"), renders[i])
 
-        threading.Thread(
-            target=_process_job, args=(app, job_id, stored, n), daemon=True
-        ).start()
+        app.state.queue.enqueue(job_id)
         return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
     @app.get("/jobs/{job_id}/status")
@@ -283,8 +291,27 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 "done": done,
                 "errored": errored,
                 "total": len(statuses),
-                "finished": job["status"] in ("done", "error"),
+                "finished": job["status"] in FINISHED_STATUSES,
                 "sheets": statuses,
+            }
+        )
+
+    @app.get("/status/active")
+    def active_status():
+        """Live progress for all unfinished jobs (jobs-list polling)."""
+
+        return JSONResponse(
+            {
+                "jobs": [
+                    {
+                        "id": j["id"],
+                        "status": j["status"],
+                        "done": j["done_pages"],
+                        "total": j["page_count"],
+                    }
+                    for j in db().list_jobs()
+                    if j["status"] in ACTIVE_STATUSES
+                ]
             }
         )
 
@@ -294,6 +321,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         if not job:
             raise HTTPException(404, "Job not found")
         sheets = [s for (s, _) in db().get_sheets(job_id)]
+        _overlay_live_status(db(), job_id, sheets)
         reconciler: Reconciler = app.state.reconciler
         ref_lists = {kind: reconciler.values(kind) for kind in REF_KINDS}
         input_tokens = sum(s.input_tokens or 0 for s in sheets)
@@ -309,9 +337,28 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 "version": __version__,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
-                "finished": job["status"] in ("done", "error"),
+                "finished": job["status"] in FINISHED_STATUSES,
                 "warnings": warnings,
                 "code_options": CODE_OPTIONS,
+            },
+        )
+
+    @app.get("/jobs/{job_id}/sheets/{page}/html", response_class=HTMLResponse)
+    def sheet_fragment(request: Request, job_id: str, page: int):
+        """A single sheet card, for in-place swaps by the job-page poller."""
+
+        job = db().get_job(job_id)
+        sheet = db().get_sheet(job_id, page)
+        if not job or not sheet:
+            raise HTTPException(404, "Sheet not found")
+        _overlay_live_status(db(), job_id, [sheet])
+        return templates.TemplateResponse(
+            request,
+            "_sheet.html",
+            {
+                "job": job,
+                "sheet": sheet,
+                "warnings": {sheet.page_index: sheet_warnings(sheet)},
             },
         )
 
@@ -338,13 +385,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         if not stored.exists():
             raise HTTPException(404, "Original PDF no longer available")
         db().set_sheet_status(job_id, page, "pending")
-        db().set_job_status(job_id, "processing")
-
-        def work() -> None:
-            _extract_one(app, job_id, stored, page)
-            _finalize_job_status(app, job_id)
-
-        threading.Thread(target=work, daemon=True).start()
+        db().set_job_status(job_id, "queued")
+        app.state.queue.enqueue(job_id, [page])
         return RedirectResponse(f"/jobs/{job_id}#sheet-{page}", status_code=303)
 
     @app.post("/jobs/{job_id}/sheets/{page}/reresolve")
@@ -388,6 +430,22 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 "Content-Disposition": f'attachment; filename="{job_id}-all.csv"'
             },
         )
+
+    @app.post("/jobs/{job_id}/cancel")
+    def cancel_job(request: Request, job_id: str):
+        job = db().get_job(job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        if job["status"] in ("pending", "queued"):
+            # Not started: cancel outright; the worker skips it on dequeue.
+            db().cancel_pending_sheets(job_id)
+            db().set_job_status(job_id, "cancelled", error="")
+        elif job["status"] == "processing":
+            # The worker stops feeding pages and finalizes the cancel; the
+            # in-flight page calls are allowed to finish.
+            db().set_job_status(job_id, "cancelling")
+        referer = request.headers.get("referer")
+        return RedirectResponse(referer or f"/jobs/{job_id}", status_code=303)
 
     @app.post("/jobs/{job_id}/delete")
     def delete_job(job_id: str):

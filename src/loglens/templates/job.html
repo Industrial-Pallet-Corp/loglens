@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% from "_macros.html" import field_input, field_resolve %}
 {% block title %}LogLens - {{ job.original_name }}{% endblock %}
 {% block content %}
 <section class="card" {% if not finished %}data-poll="/jobs/{{ job.id }}/status"{% endif %}>
@@ -11,13 +10,18 @@
     </div>
   </div>
   <div class="status-row">
-    <p class="muted">
+    <div class="status-line muted">
       Status: <span class="badge badge-{{ job.status }}" data-job-status>{{ job.status }}</span>
       &middot; {{ sheets|length }} sheet(s)
       {% if input_tokens or output_tokens %}
       &middot; tokens: {{ input_tokens }} in / {{ output_tokens }} out
       {% endif %}
-    </p>
+      {% if not finished %}
+      <form method="post" action="/jobs/{{ job.id }}/cancel" class="inline" data-cancel-job>
+        <button type="submit" class="link danger">Cancel job</button>
+      </form>
+      {% endif %}
+    </div>
     <p class="legend muted">
       <span class="swatch swatch-mid"></span> medium confidence
       <span class="swatch swatch-low"></span> low confidence
@@ -25,7 +29,7 @@
     </p>
   </div>
   {% if not finished %}
-  <div class="progress"><div class="progress-bar" data-progress-bar></div></div>
+  <div class="progress" data-progress><div class="progress-bar" data-progress-bar></div></div>
   <p class="muted" data-progress-text>Processing pages...</p>
   {% endif %}
   {% if job.error %}<p class="error">{{ job.error }}</p>{% endif %}
@@ -41,102 +45,6 @@
 </datalist>
 
 {% for sheet in sheets %}
-<section class="card sheet" id="sheet-{{ sheet.page_index }}">
-  <div class="row-between">
-    <h2>Sheet {{ sheet.page_index + 1 }}</h2>
-    <div class="sheet-tools">
-      <span class="badge badge-{{ sheet.status }}">{{ sheet.status }}</span>
-      {% if sheet.status in ("done", "error") %}
-      <form method="post" action="/jobs/{{ job.id }}/sheets/{{ sheet.page_index }}/reextract" class="inline">
-        <button type="submit" class="link-button">Re-run OCR</button>
-      </form>
-      {% endif %}
-      {% if sheet.status == "done" %}
-      <form method="post" action="/jobs/{{ job.id }}/sheets/{{ sheet.page_index }}/reresolve" class="inline">
-        <button type="submit" class="link-button">Re-resolve places</button>
-      </form>
-      {% endif %}
-    </div>
-  </div>
-  <div class="sheet-grid">
-    <div class="scan">
-      <img src="/jobs/{{ job.id }}/render/{{ sheet.page_index }}.png"
-           alt="Scanned sheet {{ sheet.page_index + 1 }}" loading="lazy" />
-    </div>
-
-    {% if sheet.status == "done" %}
-    {% set w = warnings.get(sheet.page_index) %}
-    <form class="sheet-form" method="post"
-          action="/jobs/{{ job.id }}/sheets/{{ sheet.page_index }}/save">
-      {% if w and w.sheet %}
-      <ul class="warn-banner">
-        {% for msg in w.sheet %}<li>{{ msg }}</li>{% endfor %}
-      </ul>
-      {% endif %}
-      <div class="header-fields">
-        <label>Driver {{ field_resolve("driver", sheet.driver, "list-driver", required=false) }}</label>
-        <label>Date {{ field_input("date", sheet.date, size=8) }}</label>
-        <label>Truck # {{ field_resolve("truck_no", sheet.truck_no, "list-truck", required=false) }}</label>
-      </div>
-
-      <div class="table-scroll">
-      <table class="rows">
-        <thead>
-          <tr>
-            <th></th>
-            <th>Resolved location</th>
-            <th>Start</th><th>End</th><th>Trailer #</th><th>BOL/Ticket</th><th>Code</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for r in sheet.rows %}
-          {% set rw = (w.rows[loop.index0] if w and w.rows|length > loop.index0 else []) %}
-          <tr class="{{ 'warn-row' if rw }}">
-            <td class="warn-cell">
-              {% if rw %}<span class="warn-mark" title="{{ rw|join('&#10;') }}">&#9888;</span>{% endif %}
-            </td>
-            <td>{{ field_resolve("row-%d-place" % loop.index0, r.place, "list-location") }}</td>
-            <td>{{ field_input("row-%d-start_miles" % loop.index0, r.start_miles, size=7) }}</td>
-            <td>{{ field_input("row-%d-end_miles" % loop.index0, r.end_miles, size=7) }}</td>
-            <td>{{ field_resolve("row-%d-trailer_no" % loop.index0, r.trailer_no, "list-trailer", required=false) }}</td>
-            <td>{{ field_input("row-%d-bol_ticket" % loop.index0, r.bol_ticket, size=8) }}</td>
-            <td>{{ field_resolve("row-%d-code" % loop.index0, r.code, "codes", required=false) }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      </div>
-
-      <div class="footer-fields">
-        <label>Beg. Odometer {{ field_input("beg_odometer", sheet.beg_odometer) }}</label>
-        <label>End Odometer {{ field_input("end_odometer", sheet.end_odometer) }}</label>
-        <label>Total Miles {{ field_input("total_miles", sheet.total_miles) }}</label>
-      </div>
-
-      <div class="row-between">
-        <div class="save-group">
-          <button type="submit">Save corrections</button>
-          <span class="save-status" aria-live="polite"></span>
-        </div>
-        <a class="button secondary"
-           href="/jobs/{{ job.id }}/sheets/{{ sheet.page_index }}/export.csv">Sheet CSV</a>
-      </div>
-    </form>
-
-    {% elif sheet.status == "error" %}
-    <div class="sheet-status error-box">
-      <p class="error">Extraction failed.</p>
-      <p class="muted">{{ sheet.error }}</p>
-    </div>
-    {% else %}
-    <div class="sheet-status">
-      <span class="spinner"></span>
-      <p class="muted">{{ "Reading handwriting..." if sheet.status == "processing" else "Queued..." }}</p>
-    </div>
-    {% endif %}
-  </div>
-</section>
+{% include "_sheet.html" %}
 {% endfor %}
-
-<script src="/static/app.js"></script>
 {% endblock %}

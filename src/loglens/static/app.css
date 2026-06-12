@@ -72,6 +72,8 @@ table.list th, table.list td { text-align: left; padding: .45rem .5rem; border-b
 .badge-done { background: #dcf5e6; color: var(--ok); }
 .badge-error { background: #fde2df; color: var(--danger); }
 .badge-processing, .badge-pending { background: #fff0d2; color: #8a5a00; }
+.badge-queued, .badge-cancelling { background: #e8ecf4; color: #44506b; }
+.badge-cancelled { background: #eef1f5; color: var(--muted); }
 
 .error { color: var(--danger); }
 
@@ -105,7 +107,8 @@ input.conf-corrected { background: #dcf5e6; border-color: var(--ok); }
 
 /* Status line with right-justified legend */
 .status-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-.status-row p { margin: .25rem 0; }
+.status-row p, .status-line { margin: .25rem 0; }
+.job-progress { font-size: .85rem; margin-left: .35rem; }
 
 /* Legend */
 .legend { display: flex; align-items: center; gap: .4rem; font-size: .8rem; }

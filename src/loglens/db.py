@@ -69,16 +69,35 @@ CREATE INDEX IF NOT EXISTS idx_ref_aliases_kind ON ref_aliases(kind, raw_normali
 
 
 class Database:
+    """SQLite persistence with one connection per thread.
+
+    Requests, the job-queue consumer, and its page pool all touch the
+    database concurrently. Sharing a single connection across threads is
+    unsafe (a commit on one thread resets another thread's in-progress
+    SELECT), so each thread gets its own connection; WAL mode plus a busy
+    timeout handles cross-connection concurrency. The lock serializes
+    read-modify-write sequences (e.g. get-or-insert of a ref value).
+    """
+
     def __init__(self, path: Path):
         self.path = path
-        self._conn = sqlite3.connect(str(path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA foreign_keys = ON")
+        self._local = threading.local()
+        self._lock = threading.Lock()
         self._conn.executescript(SCHEMA)
         self._migrate()
         self._conn.commit()
-        # Writes may come from the background worker thread; serialize them.
-        self._lock = threading.Lock()
+
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(str(self.path), timeout=10)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA busy_timeout = 10000")
+            self._local.conn = conn
+        return conn
 
     def _migrate(self) -> None:
         """Add columns that older databases may be missing."""
@@ -145,10 +164,22 @@ class Database:
         return dict(row) if row else None
 
     def list_jobs(self) -> list[dict[str, Any]]:
+        """All jobs, newest first, with per-job sheet progress counts."""
+
         rows = self._conn.execute(
-            "SELECT * FROM jobs ORDER BY created_at DESC"
+            "SELECT j.*,"
+            " SUM(CASE WHEN s.status = 'done' THEN 1 ELSE 0 END) AS done_pages,"
+            " SUM(CASE WHEN s.status = 'error' THEN 1 ELSE 0 END) AS errored_pages"
+            " FROM jobs j LEFT JOIN sheets s ON s.job_id = j.id"
+            " GROUP BY j.id ORDER BY j.created_at DESC"
         ).fetchall()
-        return [dict(r) for r in rows]
+        jobs = []
+        for r in rows:
+            d = dict(r)
+            d["done_pages"] = d["done_pages"] or 0
+            d["errored_pages"] = d["errored_pages"] or 0
+            jobs.append(d)
+        return jobs
 
     def delete_job(self, job_id: str) -> None:
         with self._lock:
@@ -188,6 +219,29 @@ class Database:
             self._conn.execute(
                 "UPDATE sheets SET status = ?, error = ? WHERE job_id = ? AND page_index = ?",
                 (status, error, job_id, page_index),
+            )
+            self._conn.commit()
+
+    def cancel_pending_sheets(self, job_id: str) -> None:
+        """Mark not-yet-extracted sheets cancelled (live status column; the
+        stored sheet JSON keeps its last state and is overlaid on render)."""
+
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sheets SET status = 'cancelled' WHERE job_id = ?"
+                " AND status IN ('pending', 'processing')",
+                (job_id,),
+            )
+            self._conn.commit()
+
+    def reset_processing_sheets(self, job_id: str) -> None:
+        """Return interrupted sheets to the pending state (startup recovery)."""
+
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sheets SET status = 'pending', error = NULL"
+                " WHERE job_id = ? AND status = 'processing'",
+                (job_id,),
             )
             self._conn.commit()
 
