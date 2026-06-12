@@ -1,3 +1,56 @@
+// Hover magnifier: a circular lens that follows the cursor over any scan
+// thumbnail, showing the underlying high-res render at native scale. Pure
+// re-display of the already-loaded image as a background; delegated handlers
+// keep it working on sheet fragments swapped in by the poller.
+(function () {
+  if (window.matchMedia && window.matchMedia("(hover: none)").matches) return;
+
+  const SIZE = 360; // lens diameter (px)
+  const R = SIZE / 2;
+  let loupe = null;
+
+  function lens() {
+    if (!loupe) {
+      loupe = document.createElement("div");
+      loupe.className = "loupe";
+      document.body.appendChild(loupe);
+    }
+    return loupe;
+  }
+
+  function update(img, event) {
+    const rect = img.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+      return hide();
+    }
+    const zoom = Math.min(6, Math.max(2, img.naturalWidth / rect.width));
+    const el = lens();
+    el.style.backgroundImage = 'url("' + img.src + '")';
+    el.style.backgroundSize = rect.width * zoom + "px " + rect.height * zoom + "px";
+    el.style.backgroundPosition = -(x * zoom - R) + "px " + -(y * zoom - R) + "px";
+    el.style.left = event.clientX - R + "px";
+    el.style.top = event.clientY - R + "px";
+    el.style.display = "block";
+  }
+
+  function hide() {
+    if (loupe) loupe.style.display = "none";
+  }
+
+  document.addEventListener("mousemove", function (event) {
+    const img = event.target;
+    if (img instanceof HTMLImageElement && img.closest(".scan") && img.naturalWidth) {
+      update(img, event);
+    } else {
+      hide();
+    }
+  });
+  document.addEventListener("mouseleave", hide);
+  window.addEventListener("scroll", hide, { passive: true });
+})();
+
 // Mark a field "corrected" (light green): it will be committed on save.
 function markCorrected(input, title) {
   if (input.dataset.origClass === undefined) {

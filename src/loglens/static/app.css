@@ -80,6 +80,14 @@ table.list th, table.list td { text-align: left; padding: .45rem .5rem; border-b
 .sheet-grid { display: grid; grid-template-columns: minmax(240px, 0.62fr) 2fr; gap: 1.25rem; align-items: start; }
 .scan img { width: 100%; border: 1px solid var(--line); border-radius: 8px; position: sticky; top: 1rem; }
 
+/* Hover magnifier lens over scan thumbnails */
+.loupe {
+  position: fixed; width: 360px; height: 360px; border-radius: 50%;
+  border: 2px solid var(--accent); box-shadow: 0 4px 18px rgba(0, 0, 0, .25);
+  background-repeat: no-repeat; background-color: #fff;
+  pointer-events: none; z-index: 50; display: none;
+}
+
 .header-fields, .footer-fields { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: .7rem; }
 .footer-fields { margin-top: .7rem; }
 label { font-size: .8rem; color: var(--muted); display: flex; flex-direction: column; gap: .2rem; }
